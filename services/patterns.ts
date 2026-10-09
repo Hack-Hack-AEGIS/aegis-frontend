@@ -8,7 +8,8 @@ function lcs(a: Step[], b: Step[]): number {
   return dp[a.length][b.length];
 }
 
-const similarity = (a: Step[], b: Step[]) => (2 * lcs(a, b)) / (a.length + b.length);
+export const similarity = (a: Step[], b: Step[]) =>
+  a.length + b.length === 0 ? 0 : (2 * lcs(a, b)) / (a.length + b.length);
 
 export function averagePairSimilarity(list: Incident[]): number {
   let sum = 0, n = 0;

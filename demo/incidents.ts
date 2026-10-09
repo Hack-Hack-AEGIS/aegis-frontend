@@ -1,6 +1,6 @@
 export type Step =
   | "AUTHORITY" | "URGENCY" | "CHANNEL_SHIFT" | "ISOLATION"
-  | "REMOTE_ACCESS" | "CREDENTIALS" | "TRANSFER";
+  | "REMOTE_ACCESS" | "CREDENTIALS" | "TRANSFER" | "LURE" | "TRUST";
 
 export type Incident = { id: string; label: string; surface: string; steps: Step[] };
 
@@ -12,6 +12,8 @@ export const STEP_LABEL: Record<Step, string> = {
   REMOTE_ACCESS: "Remote access",
   CREDENTIALS: "Credential request",
   TRANSFER: "Money transfer",
+  LURE: "Reward lure",
+  TRUST: "Rapport building",
 };
 
 export const STEP_COLOR: Record<Step, string> = {
@@ -22,7 +24,17 @@ export const STEP_COLOR: Record<Step, string> = {
   REMOTE_ACCESS: "bg-red-500/20 text-red-200 border-red-500/40",
   CREDENTIALS: "bg-orange-500/20 text-orange-200 border-orange-500/40",
   TRANSFER: "bg-rose-600/30 text-rose-100 border-rose-500/50",
+  LURE: "bg-teal-500/20 text-teal-200 border-teal-500/40",
+  TRUST: "bg-lime-500/20 text-lime-200 border-lime-500/40",
 };
+
+// Safe lookups: never crash on a step name we don't know.
+export const stepLabel = (s: string): string =>
+  STEP_LABEL[s as Step] ??
+  s.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+
+export const stepColor = (s: string): string =>
+  STEP_COLOR[s as Step] ?? "bg-slate-500/20 text-slate-200 border-slate-500/40";
 
 export const incidents: Incident[] = [
   { id: "A", label: "Incident A", surface: "Bank · WhatsApp",

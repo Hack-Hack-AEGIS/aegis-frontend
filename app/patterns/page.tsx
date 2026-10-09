@@ -1,8 +1,65 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { incidents, newIncident, STEP_LABEL, STEP_COLOR, type Incident } from "@/demo/incidents";
-import { averagePairSimilarity, predictNext } from "@/services/patterns";
+import {
+  incidents as demoIncidents,
+  newIncident,
+  stepLabel,
+  stepColor,
+  type Incident,
+} from "@/demo/incidents";
+import { averagePairSimilarity, predictNext, similarity } from "@/services/patterns";
+
+const HTTP_URL = process.env.NEXT_PUBLIC_BACKEND_HTTP;
+
+function clean(data: unknown): Incident[] {
+  if (!Array.isArray(data)) return [];
+  return data
+    .filter(
+      (d) =>
+        d &&
+        typeof d.id !== "undefined" &&
+        Array.isArray(d.steps) &&
+        d.steps.length >= 2 &&
+        d.steps.every((x: unknown) => typeof x === "string")
+    )
+    .map((d) => ({
+      id: String(d.id),
+      label: String(d.label ?? `Incident ${d.id}`),
+      surface: String(d.surface ?? ""),
+      steps: d.steps,
+    }));
+}
+
+// Greedy pick of up to n incidents with the most different step sequences.
+function pickDistinct(list: Incident[], n = 3): Incident[] {
+  const unique: Incident[] = [];
+  const seen = new Set<string>();
+  for (const inc of list) {
+    const key = inc.steps.join(">");
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(inc);
+    }
+  }
+  if (unique.length <= n) return unique;
+  const chosen = [unique[0]];
+  while (chosen.length < n) {
+    let best: Incident | null = null;
+    let bestScore = -1;
+    for (const cand of unique) {
+      if (chosen.includes(cand)) continue;
+      const minDist = Math.min(...chosen.map((c) => 1 - similarity(cand.steps, c.steps)));
+      if (minDist > bestScore) {
+        bestScore = minDist;
+        best = cand;
+      }
+    }
+    if (!best) break;
+    chosen.push(best);
+  }
+  return chosen;
+}
 
 function Row({ inc, predicted }: { inc: Incident; predicted?: string }) {
   return (
@@ -14,7 +71,9 @@ function Row({ inc, predicted }: { inc: Incident; predicted?: string }) {
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {inc.steps.map((st, i) => (
           <span key={st + i} className="flex items-center gap-2">
-            <span className={`rounded border px-2 py-1 text-xs ${STEP_COLOR[st]}`}>{STEP_LABEL[st]}</span>
+            <span className={`rounded border px-2 py-1 text-xs ${stepColor(st)}`}>
+              {stepLabel(st)}
+            </span>
             {(i < inc.steps.length - 1 || predicted) && <span className="text-slate-600">→</span>}
           </span>
         ))}
@@ -31,56 +90,111 @@ function Row({ inc, predicted }: { inc: Incident; predicted?: string }) {
 export default function Patterns() {
   const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [library, setLibrary] = useState<Incident[]>(demoIncidents);
+  const [fromBackend, setFromBackend] = useState(false);
+
+  useEffect(() => {
+    if (!HTTP_URL) return;
+    const ctrl = new AbortController();
+    fetch(`${HTTP_URL}/library/incidents`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((data) => {
+        const valid = clean(data);
+        if (valid.length >= 2) {
+          setLibrary(valid);
+          setFromBackend(true);
+        }
+      })
+      .catch(() => {
+        /* backend down: keep demo data */
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  const shown = useMemo(
+    () => (fromBackend ? pickDistinct(library, 3) : demoIncidents),
+    [fromBackend, library]
+  );
+  const n = shown.length;
+  const last = n + 2; // incidents..., similarity, new incident
 
   useEffect(() => {
     if (!playing) return;
-    if (step >= 5) { setPlaying(false); return; }
+    if (step >= last) {
+      setPlaying(false);
+      return;
+    }
     const t = setTimeout(() => setStep((s) => s + 1), 2200);
     return () => clearTimeout(t);
-  }, [playing, step]);
+  }, [playing, step, last]);
 
-  const sim = Math.round(averagePairSimilarity(incidents) * 100);
-  const pred = predictNext(newIncident.steps, incidents);
+  const sim = Math.round(averagePairSimilarity(shown) * 100);
+  const pred = predictNext(newIncident.steps, fromBackend ? library : demoIncidents);
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl space-y-4 bg-slate-950 p-4 text-slate-100">
       <header className="flex items-center justify-between">
         <h1 className="font-semibold tracking-wide">AEGIS · Pattern engine</h1>
         <div className="flex items-center gap-3">
-          <Link href="/" className="text-sm text-slate-400 hover:text-slate-200">← Live call</Link>
-          <button className="rounded bg-emerald-600 px-3 py-1" onClick={() => { setStep(1); setPlaying(true); }}>
+          <Link href="/" className="text-sm text-slate-400 hover:text-slate-200">
+            ← Live call
+          </Link>
+          <button
+            className="rounded bg-emerald-600 px-3 py-1"
+            onClick={() => {
+              setStep(1);
+              setPlaying(true);
+            }}
+          >
             Start
           </button>
-          <button className="rounded bg-slate-700 px-3 py-1" onClick={() => { setStep(0); setPlaying(false); }}>
+          <button
+            className="rounded bg-slate-700 px-3 py-1"
+            onClick={() => {
+              setStep(0);
+              setPlaying(false);
+            }}
+          >
             Reset
           </button>
         </div>
       </header>
 
       <p className="text-sm text-slate-400">
-        Different brands, languages and channels. Same underlying workflow. Anonymized demo incidents.
+        Different brands, languages and channels. Same underlying workflow. Anonymized incidents.
+        <span className="ml-2 text-xs text-slate-600">
+          Source: {fromBackend ? `backend library (${library.length} incidents)` : "demo data"}
+        </span>
       </p>
 
-      {incidents.slice(0, Math.min(step, 3)).map((inc) => <Row key={inc.id} inc={inc} />)}
+      {shown.slice(0, Math.min(step, n)).map((inc) => (
+        <Row key={inc.id} inc={inc} />
+      ))}
 
-      {step >= 4 && (
+      {step >= n + 1 && (
         <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 p-5 text-center">
-          <div className="text-xs uppercase tracking-widest text-sky-300">Same underlying workflow</div>
+          <div className="text-xs uppercase tracking-widest text-sky-300">
+            Structural similarity
+          </div>
           <div className="mt-1 text-5xl font-semibold text-sky-200">{sim}%</div>
-          <div className="text-sm text-slate-300">structural similarity across incidents A, B and C</div>
+          <div className="text-sm text-slate-300">average across the incidents above</div>
           <div className="mt-1 text-[11px] text-slate-500">
             Computed from step order (longest common subsequence), ignoring brand and channel names.
           </div>
         </div>
       )}
 
-      {step >= 5 && (
+      {step >= n + 2 && (
         <>
-          <Row inc={newIncident} predicted={pred ? STEP_LABEL[pred.next] : undefined} />
+          <Row
+            inc={newIncident}
+            predicted={pred ? stepLabel(pred.next) : undefined}
+          />
           {pred && (
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200">
               AEGIS recognizes the pattern <b>before the money step</b>. Likely next:{" "}
-              <b>{STEP_LABEL[pred.next]}</b>, matched in {pred.votes} of {pred.total} known incidents. Early warning would trigger now.
+              <b>{stepLabel(pred.next)}</b>, matched in {pred.votes} of {pred.total} known
+              incidents. Early warning would trigger now.
             </div>
           )}
         </>
